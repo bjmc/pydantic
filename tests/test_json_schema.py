@@ -55,6 +55,7 @@ from pydantic import (
     computed_field,
     field_serializer,
     field_validator,
+    model_validator,
 )
 from pydantic._internal._core_metadata import CoreMetadataHandler, build_metadata_dict
 from pydantic.color import Color
@@ -6243,3 +6244,43 @@ def test_pydantic_types_as_default_values(pydantic_type, expected_json_schema):
         parent: pydantic_type = pydantic_type(name='Jon Doe')
 
     assert Child.model_json_schema() == expected_json_schema
+
+
+def test_annotated_third_party_type_as_default_value():
+    class ThirdPartyClass:
+        def __init__(self, name: str):
+            self.name = name
+
+    class ThirdPartyAnnotations(BaseModel):
+        name: str
+
+        @model_validator(mode='wrap')
+        def _validate(value, handler) -> ThirdPartyClass:
+            if isinstance(value, ThirdPartyClass):
+                return value
+            validated = handler(value)
+
+            if isinstance(validated, ThirdPartyClass):
+                return validated
+
+            return ThirdPartyClass(name=validated.name)
+
+    AnnotatedType = Annotated[ThirdPartyClass, ThirdPartyAnnotations]
+
+    class ModelWithThirdPartyField(BaseModel):
+        third_party: AnnotatedType = ThirdPartyClass(name='Some Default')
+
+    expected = {
+        '$defs': {
+            'ThirdPartyAnnotations': {
+                'properties': {'name': {'title': 'Name', 'type': 'string'}},
+                'required': ['name'],
+                'title': 'ThirdPartyAnnotations',
+                'type': 'object',
+            }
+        },
+        'properties': {'third_party': {'$ref': '#/$defs/ThirdPartyAnnotations', 'default': {'name': 'Some Default'}}},
+        'title': 'ModelWithThirdPartyField',
+        'type': 'object',
+    }
+    assert ModelWithThirdPartyField.model_json_schema() == expected
